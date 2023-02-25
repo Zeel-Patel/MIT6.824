@@ -11,21 +11,20 @@ import (
 )
 
 type MapTask struct {
-	id    int
-	file  string
-	start time.Time
-	done  bool
+	id        int
+	file      string
+	startTime time.Time
+	done      bool
 }
 
 type ReduceTask struct {
-	id    int
-	files []string
-	start time.Time
-	done  bool
+	id        int
+	files     []string
+	startTime time.Time
+	done      bool
 }
 
 type Coordinator struct {
-	// Your definitions here.
 	mutex        sync.Mutex
 	mapTasks     []MapTask
 	reduceTasks  []ReduceTask
@@ -33,79 +32,61 @@ type Coordinator struct {
 	reduceRemain int
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-//	fmt.Println("receeived call example")
-//	fmt.Println(args.X)
-//	reply.Y = args.X + 1
-//	return nil
-//}
-
-func (c *Coordinator) GetTask(args *TaskArgs, res *TaskReponse) error {
+func (c *Coordinator) GetTask(request *TaskRequest, response *TaskReponse) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	switch args.Type {
+	// request contains the details of the last map/reduce task the worker executed
+	switch request.Type {
 	case TaskTypeMap:
-		//print(c.mapTasks[args.Id].done)
-		if !c.mapTasks[args.Id].done {
-			c.mapTasks[args.Id].done = true
-			for reduceId, file := range args.Files {
+		if !c.mapTasks[request.Id].done {
+			c.mapTasks[request.Id].done = true
+			for reduceId, file := range request.Files {
 				if len(file) > 0 {
 					c.reduceTasks[reduceId].files = append(c.reduceTasks[reduceId].files, file)
 				}
 			}
 			c.mapRemain--
-			//log.Printf("Remaining map: %d", c.mapRemain)
-
 		}
 	case TaskTypeReduce:
-		if !c.reduceTasks[args.Id].done {
-			c.reduceTasks[args.Id].done = true
+		if !c.reduceTasks[request.Id].done {
+			c.reduceTasks[request.Id].done = true
 			c.reduceRemain--
-			//log.Printf("Remaining reduce: %d", c.reduceRemain)
 		}
 	}
 
-	//log.Printf("Remaining map: %d, reduce: %d\n", c.mapRemain, c.reduceRemain)
-
+	// Assign map or reduce task to worker
 	now := time.Now()
-	timeoutAgo := now.Add(-100 * time.Second)
+	timeoutAgo := now.Add(-10 * time.Second)
 	if c.mapRemain > 0 {
 		for idx := range c.mapTasks {
-			t := &c.mapTasks[idx]
-			if !t.done && t.start.Before(timeoutAgo) {
-				res.Type = TaskTypeMap
-				res.Id = t.id
-				res.Files = []string{t.file}
-				res.NReduce = len(c.reduceTasks)
+			task := &c.mapTasks[idx]
+			if !task.done && task.startTime.Before(timeoutAgo) {
+				response.Type = TaskTypeMap
+				response.Id = task.id
+				response.Files = []string{task.file}
+				response.NReduce = len(c.reduceTasks)
 
-				t.start = now
-				//log.Printf("Assigned task map %d", res.Id)
+				task.startTime = now
 				return nil
 			}
 		}
-		res.Type = TaskTypeSleep
+		response.Type = TaskTypeSleep
 	} else if c.reduceRemain > 0 {
 		for idx := range c.reduceTasks {
-			t := &c.reduceTasks[idx]
-			if !t.done && t.start.Before(timeoutAgo) {
-				res.Type = TaskTypeReduce
-				res.Id = t.id
-				res.Files = t.files
+			task := &c.reduceTasks[idx]
+			if !task.done && task.startTime.Before(timeoutAgo) {
+				response.Type = TaskTypeReduce
+				response.Id = task.id
+				response.Files = task.files
 
-				t.start = now
-				//log.Printf("Assigned task reduce %d", res.Id)
+				task.startTime = now
 				return nil
 			}
 		}
-		res.Type = TaskTypeSleep
+		response.Type = TaskTypeSleep
 	} else {
-		res.Type = TaskTypeExit
+		response.Type = TaskTypeExit
 	}
 	return nil
 }
